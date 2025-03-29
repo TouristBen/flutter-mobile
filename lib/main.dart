@@ -109,12 +109,12 @@ class _CellPage extends State<CellPage>{
                       StartDate: widget.StartDate,
                       EndDate: widget.EndDate,
                       BatteryID: widget.BatteryID,
-                      CellID: index,
+                      CellID: index+1,
                     )
                   )
                 );
               },
-              child: Text('Cell $index'),
+              child: Text('Cell ${index+1}'),
             ),
                     
           );
@@ -224,12 +224,12 @@ class _BatteryPage extends State<BatteryPage>{
                             builder: (context) => CellPage(
                             StartDate: _dateController.text,
                             EndDate: _dateController2.text,
-                            BatteryID: index,
+                            BatteryID: index+1,
                             )
                           )
                         );
                       },
-                      child: Text('Battery $index'),
+                      child: Text('Battery ${index+1}'),
                     ),                    
                   );
                 },
@@ -290,33 +290,29 @@ class _AppBarExampleState extends State<AppBarExample> {
   Widget build(BuildContext context) {
     int interval = 1800;
     int numberOfDays = (DateTime.parse(widget.EndDate).difference(DateTime.parse(widget.StartDate)).inHours /24).round();
-    if( numberOfDays <= 3 )
+    if( numberOfDays <= 14 )
     {
       interval = 1800; //30min
     }
-    else if( numberOfDays <= 7 )
+    else if( numberOfDays <= 28 )
     {
       interval = 3600; //1hour
     }
-    else if( numberOfDays <= 14 )
+    else if( numberOfDays <=  90)
     {
       interval = 7200; //2hour
     }
-    else if( numberOfDays <= 28 )
+    else if( numberOfDays <=  180)
     {
       interval = 14400; //4hour
     }
-    else if( numberOfDays <= 93 )
-    {
-      interval = 43200; //12hour
-    }
-    else {interval = 86400;} //1day
-
+    else {interval = 43200;}
 
     Future<List<Battery>> getBatteries() async{
       final response = await http.get(Uri.parse('http://api.chansheunglong.com:31311/api/data?battery=6&cell=${widget.CellID}&start=${widget.StartDate}T00:00:00Z&end=${widget.EndDate}T23:59:59Z&interval=$interval'));
       return json.decode(response.body).map<Battery>(Battery.fromJson).toList();
     }
+
     Future<List<Battery>> batteries = getBatteries();
     return Scaffold(
       appBar: AppBar(
@@ -337,6 +333,10 @@ class _AppBarExampleState extends State<AppBarExample> {
               for (int i=0;i<battery.length;i++)
               FlSpot(dateTime[i].millisecondsSinceEpoch.toDouble(),battery[i].soh.toDouble())
             ];
+            List<FlSpot> soh_warn = [
+              for (int i=0;i<battery.length;i++)
+              FlSpot(dateTime[i].millisecondsSinceEpoch.toDouble(),30)
+            ];
             List<FlSpot> resistance = [
               for (int i=0;i<battery.length;i++)
               FlSpot(dateTime[i].millisecondsSinceEpoch.toDouble(),battery[i].internalResistance.toDouble())
@@ -353,16 +353,17 @@ class _AppBarExampleState extends State<AppBarExample> {
             return ListView(
               padding: const EdgeInsets.all(8),
               children: [
-                const Text('Soc'),
-                Container(
+                const Text('SOC\n'),
+                SizedBox(
                   height: 600,
                   width: 300,
                   child: LineChart(
                     LineChartData(
                       lineBarsData: [
                         LineChartBarData(
-                          spots: spots[0]
-                        )
+                          spots: spots[0],
+                          dotData: FlDotData(show: false),
+                        ),
                       ],
                       minY: 0,
                       maxY: 100,
@@ -431,11 +432,18 @@ class _AppBarExampleState extends State<AppBarExample> {
               )   
                     )
                   ),
-                  const Text('SoH'),
-                Container(
+                  const Text('SOH'),
+                SizedBox(
                   height: 600,
                   width: 300,
-                  child: LineChart(LineChartData(lineBarsData: [LineChartBarData(spots: spots[1])],
+                  child: LineChart(LineChartData(lineBarsData: [LineChartBarData(spots: spots[1], dotData: FlDotData(show: false)),
+                    LineChartBarData(
+                      spots: soh_warn,
+                      dotData: FlDotData(show: false),
+                      color: Color.fromARGB(255, 255, 0, 0)
+                      
+                    )
+                  ],
                   minY: 0,
                   maxY: 100,
                   
@@ -506,10 +514,10 @@ class _AppBarExampleState extends State<AppBarExample> {
                   )
                   ),
                   const Text('Internal Resistance'),
-                Container(
+                SizedBox(
                   height: 600,
                   width: 300,
-                  child: LineChart(LineChartData(lineBarsData: [LineChartBarData(spots: spots[2])],
+                  child: LineChart(LineChartData(lineBarsData: [LineChartBarData(spots: spots[2], dotData: FlDotData(show: false))],
                   titlesData: FlTitlesData(
                   show: true,
                   bottomTitles: AxisTitles(
@@ -577,10 +585,10 @@ class _AppBarExampleState extends State<AppBarExample> {
                   )
                   ),
                   const Text('Voltage'),
-                  Container(
+                  SizedBox(
                   height: 600,
                   width: 300,
-                  child: LineChart(LineChartData(lineBarsData: [LineChartBarData(spots: spots[3])],
+                  child: LineChart(LineChartData(lineBarsData: [LineChartBarData(spots: spots[3], dotData: FlDotData(show: false))],
                   titlesData: FlTitlesData(
                   show: true,
                   bottomTitles: AxisTitles(
