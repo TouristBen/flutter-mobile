@@ -1,19 +1,67 @@
 
+// ignore_for_file: unused_local_variable
+
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:fl_chart/fl_chart.dart';
 
-/// Flutter code sample for [AppBar].
-class Todo {
-  final int numbers;
-  const Todo (this.numbers);
+class Sample {
+  final DateTime timestamp;
+  final double value;
+  Sample(this.timestamp, this.value);
 }
-class BatteryTodo{
-  final String startDate;
-  final String EndDate;
-  final int BatteryID;
-  const BatteryTodo(this.startDate,this.EndDate, this.BatteryID);
+
+class TimeSeriesData {
+  final DateTime start;
+  final DateTime end;
+  final int interval;
+  final Map<String, List<double?>> fields; // <-- store as map
+
+  TimeSeriesData({
+    required this.start,
+    required this.end,
+    required this.interval,
+    required this.fields,
+  });
+
+  factory TimeSeriesData.fromJson(Map<String, dynamic> json) {
+    final Map<String, List<double?>> map = {};
+    for (var item in (json['data'] as List)) {
+      map[item['field'] as String] =
+          (item['values'] as List).map((v) => v == null ? null : (v as num).toDouble()).toList();
+    }
+    return TimeSeriesData(
+      start: DateTime.parse(json['start']),
+      end: DateTime.parse(json['end']),
+      interval: int.parse(json['interval']),
+      fields: map,
+    );
+  }
+
+  /// Return timestamped samples for one field (skips nulls).
+  List<Sample> samplesFor(String field) {
+    final values = fields[field];
+    if (values == null) return [];
+    final step = Duration(seconds: interval);
+    final List<Sample> out = [];
+    for (int i = 0; i < values.length; i++) {
+      final ts = start.add(step * i);
+      final val = values[i];
+      if (val != null) {
+        out.add(Sample(ts, val));
+      }
+    }
+    return out;
+  }
+
+  /// Convert directly into fl_chart spots (x = millis, y = value)
+  List<FlSpot> spotsFor(String field) {
+    final samples = samplesFor(field);
+    return samples
+        .map((s) => FlSpot(s.timestamp.millisecondsSinceEpoch.toDouble(), s.value))
+        .toList();
+  }
 }
 class Battery {
   final num cell;
@@ -97,7 +145,7 @@ class _CellPage extends State<CellPage>{
       appBar: AppBar(title: const Text("Cell List")),
       body: GridView.builder(
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2,mainAxisExtent: 70),
-        itemCount: 30,
+        itemCount: 4,
         itemBuilder: (context, index) {
           return Card(
             child: InkWell(
@@ -115,6 +163,7 @@ class _CellPage extends State<CellPage>{
                 );
               },
               child: Text('Cell ${index+1}'),
+              
             ),
                     
           );
@@ -126,8 +175,6 @@ class _CellPage extends State<CellPage>{
 
 
 class BatteryPage extends StatefulWidget {
-  const BatteryPage({super.key});
-
   @override
   State<BatteryPage> createState() => _BatteryPage();
 }
@@ -263,29 +310,15 @@ class _AppBarExampleState extends State<AppBarExample> {
   bool shadowColor = false;
   double? scrolledUnderElevation;
   get todos => null;
+  late TransformationController _transformationController;
+  bool _isPanEnabled = true;
+  bool _isScaleEnabled = true;
   @override
   void initState() {
+    _transformationController = TransformationController();
     super.initState();
   }
-
-/*  Widget buildBatteries(List<Battery> batteries) => GridView.builder(
-    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-      crossAxisCount: 2,
-      childAspectRatio: 2.0,
-      mainAxisSpacing: 10.0,
-      crossAxisSpacing: 10.0,
-    ),
-    itemCount: batteries.length,
-    itemBuilder: (context, index){
-      final battery = batteries[index];
-      return Card(
-        child: ListTile(
-          title: Text('Battery${battery.battery}'),
-          subtitle: Text('Voltage: ${battery.voltage} Resistance: ${battery.internalResistance}\n Soc: ${battery.soc} Soh: ${battery.soh}'),
-        ),
-      );
-    }
-  );*/
+  String _graphs = 'soc';
   @override 
   Widget build(BuildContext context) {
     int interval = 1800;
@@ -307,13 +340,11 @@ class _AppBarExampleState extends State<AppBarExample> {
       interval = 14400; //4hour
     }
     else {interval = 43200;}
-
-    Future<List<Battery>> getBatteries() async{
-      final response = await http.get(Uri.parse('http://api.chansheunglong.com:31311/api/data?battery=6&cell=${widget.CellID}&start=${widget.StartDate}T00:00:00Z&end=${widget.EndDate}T23:59:59Z&interval=$interval'));
-      return json.decode(response.body).map<Battery>(Battery.fromJson).toList();
+    Future <TimeSeriesData> getTimeSeries() async{
+      final response = await http.get(Uri.parse('http://remote.cityu.chansheunglong.com:31401/api/timeseries?battery=${widget.BatteryID}&cell=${widget.CellID}&start=${widget.StartDate}T00:00:00Z&end=${widget.EndDate}T23:59:59Z&interval=$interval'));
+      return TimeSeriesData.fromJson(jsonDecode(response.body));
     }
-
-    Future<List<Battery>> batteries = getBatteries();
+    Future<TimeSeriesData> timeSeries = getTimeSeries();
     return Scaffold(
       appBar: AppBar(
         title: const Text('Detail Page'),
@@ -321,21 +352,19 @@ class _AppBarExampleState extends State<AppBarExample> {
         shadowColor: shadowColor ? Theme.of(context).colorScheme.shadow : null,
       ),
       body: 
-      FutureBuilder <List<Battery>>(
-        future: batteries,
+      FutureBuilder <TimeSeriesData>(
+        future: timeSeries,
         builder: (context,snapshot){
           if (snapshot.hasData){
-            final battery = snapshot.data!;
-            List<DateTime> dateTime = [for(int i=0;i<battery.length;i++)
+            final timeSeries = snapshot.data!;
+            /*List<DateTime> dateTime = [for(int i=0;i<battery.length;i++)
               DateTime.parse(battery[i].timestamp)
             ];
             List<FlSpot> soh = [
               for (int i=0;i<battery.length;i++)
               FlSpot(dateTime[i].millisecondsSinceEpoch.toDouble(),battery[i].soh.toDouble())
             ];
-            List<FlSpot> soh_warn = [
-              for (int i=0;i<battery.length;i++)
-              FlSpot(dateTime[i].millisecondsSinceEpoch.toDouble(),30)
+            List<FlSpot> soh_warn = [FlSpot(dateTime.first.millisecondsSinceEpoch.toDouble(),30), FlSpot(dateTime.last.millisecondsSinceEpoch.toDouble(),30)
             ];
             List<FlSpot> resistance = [
               for (int i=0;i<battery.length;i++)
@@ -348,21 +377,299 @@ class _AppBarExampleState extends State<AppBarExample> {
             List<FlSpot> voltage = [
               for (int i=0;i<battery.length;i++)
               FlSpot(dateTime[i].millisecondsSinceEpoch.toDouble(),battery[i].voltage.toDouble())
-            ];          
-            List<List<FlSpot>> spots = [soc,soh,resistance,voltage];
-            return ListView(
+            ];*/
+            //List<List<FlSpot>> spots = [soc,soh,resistance,voltage];
+            return Column(
+              children: [
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final width = constraints.maxWidth;
+                    return width >= 380
+                    ? Row(
+                        children: [
+                          const SizedBox(width: 16),
+                          Flexible(
+                            child: RadioGroup<String>(
+                            groupValue: _graphs,
+                            onChanged: (value) {
+                              setState(() {
+                                if (value == null) return;
+                                _graphs = value;
+                              });
+                            },
+                            child: const Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                ListTile(
+                                  title: Text('soc'),
+                                  leading: Radio(value: 'soc',),
+                                  visualDensity: VisualDensity(vertical: -4),
+                                  minVerticalPadding: 0,
+                                  dense: true,
+                                ),
+                                ListTile(
+                                  title: Text('soh'),
+                                  leading: Radio(value: 'soh',),
+                                  visualDensity: VisualDensity(vertical: -4),
+                                  minVerticalPadding: 0,
+                                  dense: true,
+                                ),
+                                ListTile(
+                                  title: Text('ocv'),
+                                  leading: Radio(value: 'ocv',),
+                                  visualDensity: VisualDensity(vertical: -4),
+                                  minVerticalPadding: 0,
+                                  dense: true,
+                                ),
+                                ListTile(
+                                  title: Text('r0'),
+                                  leading: Radio(value: 'r0',),
+                                  visualDensity: VisualDensity(vertical: -4),
+                                  minVerticalPadding: 0,
+                                  dense: true,
+                                ),
+                                ListTile(
+                                  title: Text('vb'),
+                                  leading: Radio(value: 'vb',),
+                                  visualDensity: VisualDensity(vertical: -4),
+                                  minVerticalPadding: 0,
+                                  dense: true,
+                                ),                                                                                                  
+                                ],),
+                              ),
+                          ),  
+                        const Spacer(),
+                        Center(
+                          child: _TransformationButtons(
+                            controller: _transformationController,
+                          ),
+                        ),
+                      ],
+                    )
+                    : Column(
+                      children: [
+                          RadioGroup<String>(
+                            groupValue: _graphs,
+                            onChanged: (value) {
+                              setState(() {
+                                if (value == null) return;
+                                _graphs = value;
+                              });
+                            },
+                            child: const Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                
+                                ListTile(
+                                  title: Text('soc'),
+                                  leading: Radio(value: 'soc',)
+                                ),
+                                ListTile(
+                                  title: Text('soh'),
+                                  leading: Radio(value: 'soh',)
+                                ),
+                                ListTile(
+                                  title: Text('ocv'),
+                                  leading: Radio(value: 'ocv',)
+                                ),
+                                ListTile(
+                                  title: Text('r0'),
+                                  leading: Radio(value: 'r0',)
+                                ),
+                                ListTile(
+                                  title: Text('vb'),
+                                  leading: Radio(value: 'vb',)
+                                ),
+                                                                                                                                           
+                                ],),
+                              ),
+                        const SizedBox(height: 16),
+                        _TransformationButtons(
+                          controller: _transformationController,
+                        ),
+                      ],
+                    );
+                  },
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      const Text('Pan'),
+                      Switch(
+                        value: _isPanEnabled,
+                        onChanged: (value) {
+                          setState(() {
+                            _isPanEnabled = value;
+                          });
+                        },
+                      ),
+                      const Text('Scale'),
+                      Switch(
+                        value: _isScaleEnabled,
+                        onChanged: (value) {
+                          setState(() {
+                            _isScaleEnabled = value;
+                          });
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                AspectRatio(
+                  aspectRatio: 1.4,
+                  child: Padding(
+                    padding: const EdgeInsets.only(
+                    top: 0.0,
+                    right: 18.0,
+                    ),
+                    child: LineChart(
+                      transformationConfig: FlTransformationConfig(
+                      scaleAxis: FlScaleAxis.horizontal,
+                      minScale: 1.0,
+                      maxScale: 25.0,
+                      panEnabled: _isPanEnabled,
+                      scaleEnabled: _isScaleEnabled,
+                      transformationController: _transformationController,
+                      ),
+                      LineChartData(
+                        lineBarsData: [
+                          LineChartBarData(
+                            spots:timeSeries.spotsFor(_graphs),
+                            dotData: const FlDotData(show: false),
+                            barWidth: 1,
+                            belowBarData: BarAreaData(
+                              show: true,
+                              gradient: const LinearGradient(
+                                colors: [Color.fromARGB(122, 122, 122, 122), Color.fromARGB(133, 122, 122, 122)]),
+                            )
+                          )
+                        ],
+                        /*minY: 0,
+                        maxY: 100,*/
+                        titlesData: FlTitlesData(
+                          show: true,
+                          rightTitles: const AxisTitles(
+                            sideTitles: SideTitles(showTitles: false),
+                          ),
+                          topTitles: const AxisTitles(
+                            sideTitles: SideTitles(showTitles: false),
+                          ),
+                          bottomTitles: AxisTitles(
+                            sideTitles: SideTitles(
+                              maxIncluded: false,
+                              minIncluded: false,
+                              showTitles: true,
+                              /*getTitlesWidget: (value, meta){
+                                final DateTime timestamp = DateTime.fromMillisecondsSinceEpoch(value.toInt());
+                                final parts = timestamp.toIso8601String().split("T");
+                                final label = parts.first.substring(5,10);
+                                return Text(label);
+                              },*/
+                              getTitlesWidget: (value, meta){
+                                final DateTime date =  DateTime.fromMillisecondsSinceEpoch(value.toInt());
+                                return SideTitleWidget(
+                                  meta: meta,
+                                  child: Transform.rotate(
+                                    angle: -45*3.14/180,
+                                    child: Text(
+                                      '${date.month}/${date.day}',
+                                      style: const TextStyle(
+                                        color: Colors.black,
+                                        fontSize: 12,
+                                        ),
+                                      ),
+                                    ),
+                                );
+                              },
+                              reservedSize: 40,
+                            )
+                          )
+                        ),
+                        lineTouchData: LineTouchData(
+                          touchSpotThreshold: 5,
+                          getTouchLineStart: (_, __) => -double.infinity,
+                          getTouchLineEnd: (_, __) => double.infinity,
+                          getTouchedSpotIndicator:
+                          (LineChartBarData barData, List<int> spotIndexes) {
+                            return spotIndexes.map((spotIndex) {
+                              return TouchedSpotIndicatorData(
+                                const FlLine(
+                                  color:  Color.fromARGB(255, 200, 0, 0),
+                                  strokeWidth: 1.5,
+                                  dashArray: [8, 2],
+                                ),
+                                FlDotData(
+                                  show: true,
+                                  getDotPainter: (spot, percent, barData, index) {
+                                    return FlDotCirclePainter(
+                                      radius: 6,
+                                      color: const Color.fromARGB(255, 255, 255, 0),
+                                      strokeWidth: 0,
+                                      strokeColor: const Color.fromARGB(255, 255, 255, 0),
+                                    );
+                                  },
+                                ),
+                              );
+                            }).toList();
+                          },
+                          touchTooltipData: LineTouchTooltipData(
+                            getTooltipItems: (List<LineBarSpot> touchedBarSpots) {
+                              return touchedBarSpots.map((barSpot) {
+                                final price = barSpot.y;
+                                final DateTime date = DateTime.fromMillisecondsSinceEpoch(barSpot.x.toInt());
+                                //timeSeries.spotsFor("soc")[barSpot.x.toInt()].x;
+                                return LineTooltipItem(
+                                  '',
+                                  const TextStyle(
+                                    color: Color.fromARGB(0, 0, 0, 0),
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                  children: [
+                                    TextSpan(
+                                      text: '$date',
+                                      style: const TextStyle(
+                                        color: Color.fromARGB(180, 0, 200, 0),
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                    TextSpan(
+                                      text: '\n${barSpot.y}',
+                                      style: const TextStyle(
+                                        color: Color.fromARGB(200, 0, 255, 255),
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 16,
+                                        ),
+                                    ),
+                                  ],
+                                );
+                              }).toList();
+                            },
+                            getTooltipColor: (LineBarSpot barSpot) =>
+                            Colors.black,
+                          ),
+                        ),
+                      )
+                    )  
+                  ),
+                )
+              ]
+            
+            /*ListView(
               padding: const EdgeInsets.all(8),
               children: [
                 const Text('SOC\n'),
                 SizedBox(
-                  height: 600,
+                  height: 300,
                   width: 300,
                   child: LineChart(
                     LineChartData(
                       lineBarsData: [
                         LineChartBarData(
                           spots: spots[0],
-                          dotData: FlDotData(show: false),
+                          dotData: const FlDotData(show: false),
                         ),
                       ],
                       minY: 0,
@@ -420,7 +727,9 @@ class _AppBarExampleState extends State<AppBarExample> {
                           fontSize: 14,
                         );
                         return LineTooltipItem(
-                          '${DateTime.fromMillisecondsSinceEpoch(touchedSpot.x.toInt()).toIso8601String().substring(0,10)} \n ${DateTime.fromMillisecondsSinceEpoch(touchedSpot.x.toInt()).toIso8601String().substring(11,19)}\n ${touchedSpot.y.toStringAsFixed(2)}',
+                          '${DateTime.fromMillisecondsSinceEpoch(touchedSpot.x.toInt()).toIso8601String().substring(0,10)}\n${
+                            DateTime.fromMillisecondsSinceEpoch(touchedSpot.x.toInt()).toIso8601String().substring(11,19)}\n ${
+                              touchedSpot.y.toStringAsFixed(2)}',
                           textStyle,
                         );
                       }).toList();
@@ -434,13 +743,13 @@ class _AppBarExampleState extends State<AppBarExample> {
                   ),
                   const Text('SOH'),
                 SizedBox(
-                  height: 600,
+                  height: 300,
                   width: 300,
-                  child: LineChart(LineChartData(lineBarsData: [LineChartBarData(spots: spots[1], dotData: FlDotData(show: false)),
+                  child: LineChart(LineChartData(lineBarsData: [LineChartBarData(spots: spots[1], dotData: const FlDotData(show: false)),
                     LineChartBarData(
                       spots: soh_warn,
-                      dotData: FlDotData(show: false),
-                      color: Color.fromARGB(255, 255, 0, 0)
+                      dotData: const FlDotData(show: false),
+                      color: const Color.fromARGB(255, 255, 0, 0)
                       
                     )
                   ],
@@ -515,9 +824,9 @@ class _AppBarExampleState extends State<AppBarExample> {
                   ),
                   const Text('Internal Resistance'),
                 SizedBox(
-                  height: 600,
+                  height: 300,
                   width: 300,
-                  child: LineChart(LineChartData(lineBarsData: [LineChartBarData(spots: spots[2], dotData: FlDotData(show: false))],
+                  child: LineChart(LineChartData(lineBarsData: [LineChartBarData(spots: spots[2], dotData: const FlDotData(show: false))],
                   titlesData: FlTitlesData(
                   show: true,
                   bottomTitles: AxisTitles(
@@ -586,9 +895,9 @@ class _AppBarExampleState extends State<AppBarExample> {
                   ),
                   const Text('Voltage'),
                   SizedBox(
-                  height: 600,
+                  height: 300,
                   width: 300,
-                  child: LineChart(LineChartData(lineBarsData: [LineChartBarData(spots: spots[3], dotData: FlDotData(show: false))],
+                  child: LineChart(LineChartData(lineBarsData: [LineChartBarData(spots: spots[3], dotData: const FlDotData(show: false))],
                   titlesData: FlTitlesData(
                   show: true,
                   bottomTitles: AxisTitles(
@@ -657,128 +966,25 @@ class _AppBarExampleState extends State<AppBarExample> {
                   )                      
               ],
             );
-            
-            /* return LineChart( 
-              LineChartData(
-                lineBarsData: [
-                  LineChartBarData(
-                    spots: spots[0]                      
-                  ) 
-                ],
-                titlesData: FlTitlesData(
-                  show: true,
-                  bottomTitles: AxisTitles(
-                    sideTitles: SideTitles(
-                      maxIncluded: false,
-                      showTitles: true,
-                      getTitlesWidget: (value, meta) {
-                        final DateTime date = DateTime.fromMillisecondsSinceEpoch(value.toInt());
-                        final parts = date.toIso8601String().split("T");
-                        final label = parts.last.substring(0,5);
-                        return Text(label);
-                      },
-                      reservedSize: 100,    
-                    )
-                  ),
-                  topTitles: const AxisTitles(
-                    sideTitles: SideTitles(
-                      showTitles: false,
-                    )
-                  
-                  ),
-                  leftTitles: const AxisTitles(
-                    sideTitles: SideTitles(
-                      showTitles: true,
-                      minIncluded: false,
-                      maxIncluded: false,
-                      reservedSize: 40,
-                    )
-                  ),
-                  rightTitles: const AxisTitles(
-                    sideTitles: SideTitles(
-                      showTitles: true,
-                      minIncluded: false,
-                      maxIncluded: false,
-                      reservedSize: 40,
-                    )
-                  )                  
-                  
-                ),
-                lineTouchData: LineTouchData(
-                  touchTooltipData: LineTouchTooltipData(
-                    maxContentWidth: 100,
-                    getTooltipColor: (touchedSpot) => Colors.black,
-                    getTooltipItems: (touchedSpots) {
-                      return touchedSpots.map((LineBarSpot touchedSpot) {
-                        final textStyle = TextStyle(
-                          color: touchedSpot.bar.gradient?.colors[0] ??
-                              touchedSpot.bar.color,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                        );
-                        return LineTooltipItem(
-                          '${DateTime.fromMillisecondsSinceEpoch(touchedSpot.x.toInt()).toIso8601String().substring(0,10)} \n ${DateTime.fromMillisecondsSinceEpoch(touchedSpot.x.toInt()).toIso8601String().substring(11,19)}\n ${touchedSpot.y.toStringAsFixed(2)}',
-                          textStyle,
-                        );
-                      }).toList();
-                    },
-                  ),
-                  handleBuiltInTouches: true,
-                  getTouchLineStart: (data, index) => 0,
-                ),                
-              )              
-            ); */   
           }
           else {
             return const Text ('Loading...');
           }
         }  
-      ),
-      bottomNavigationBar: BottomAppBar(
-        child: Padding(
-          padding: const EdgeInsets.all(8),
-          child: OverflowBar(
-            overflowAlignment: OverflowBarAlignment.center,
-            alignment: MainAxisAlignment.center,
-            overflowSpacing: 5.0,
-            children: <Widget>[
-              ElevatedButton.icon(
-                onPressed: () {
-                  setState(() {
-                    shadowColor = !shadowColor;
-                  });
-                },
-                icon: Icon(
-                  shadowColor ? Icons.visibility_off : Icons.visibility,
-                ),
-                label: const Text('shadow color'),
-              ),
-              const SizedBox(width: 5),
-              ElevatedButton(
-                onPressed: () {
-                  if (scrolledUnderElevation == null) {
-                    setState(() {
-                      // Default elevation is 3.0, increment by 1.0.
-                      scrolledUnderElevation = 4.0;
-                    });
-                  } else {
-                    setState(() {
-                      scrolledUnderElevation = scrolledUnderElevation! + 1.0;
-                    });
-                  }
-                },
-                child: Text(
-                  'scrolledUnderElevation: ${scrolledUnderElevation ?? 'default'}',
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+      ),*/
+            );
+          }
+          else {return const Text ('Loading...');}
+        }
+      )
     );
   }
+  @override
+  void dispose() {
+    _transformationController.dispose();
+    super.dispose();
+  }
 }
-
 
 class DetailPage extends StatefulWidget{
   const DetailPage({super.key});
@@ -824,6 +1030,245 @@ class _DetailPage extends State<DetailPage>{
       //body: const Image(
         //image: AssetImage('jpeg/graph.png'),
       //),
+    );
+  }
+}
+/*class updatedGraph extends StatefulWidget{
+  final String StartDate;
+  final String EndDate;
+  final int BatteryID;
+  final int CellID;
+
+  const updatedGraph({
+    super.key,
+    required this.StartDate,
+    required this.EndDate,
+    required this.BatteryID,
+    required this.CellID,
+    });
+  @override
+  State<updatedGraph> createState() => _updatedGraph();
+}
+class _updatedGraph extends State<updatedGraph>{
+  late TransformationController _transformationController;
+  bool _isPanEnabled = true;
+  bool _isScaleEnabled = true;
+  @override
+  void initState() {
+    super.initState();
+  }
+  @override
+  Widget build(BuildContext context){
+    int interval = 1800;
+    Future <TimeSeriesData> getTimeSeries() async{
+      final response = await http.get(Uri.parse('http://remote.cityu.chansheunglong.com:31401/api/timeseries?battery=${widget.BatteryID}&cell=${widget.CellID}&start=${widget.StartDate}T00:00:00Z&end=${widget.EndDate}T23:59:59Z&interval=$interval'));
+      return TimeSeriesData.fromJson(jsonDecode(response.body));
+    }
+    Future<TimeSeriesData> TimeSeries = getTimeSeries();
+
+    return Column(
+      children: [
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final width = constraints.maxWidth;
+            return width >= 380
+                ? Row(
+                    children: [
+                      const SizedBox(width: 16),
+                      const Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SizedBox(height: 14),
+                          /*OutlinedButton(child: Text('SOC')),
+                          OutlinedButton(child: Text('SOH')),
+                          OutlinedButton(child: Text('Internal Resistance')),
+                          OutlinedButton(child: Text('Voltage')),*/
+                          SizedBox(height: 14),
+                        ],
+                      ),
+                      const Spacer(),
+                      Center(
+                        child: _TransformationButtons(
+                          controller: TransformationController(),
+                        ),
+                      ),
+                    ],
+                  )
+                : Column(
+                    children: [
+                      const Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SizedBox(height: 14),
+                          /*OutlinedButton(child: Text('SOC')),
+                          OutlinedButton(child: Text('SOH')),
+                          OutlinedButton(child: Text('Internal Resistance')),
+                          OutlinedButton(child: Text('Voltage')),*/
+                          SizedBox(height: 14),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      _TransformationButtons(
+                        controller: TransformationController(),
+                      ),
+                    ],
+                  );
+          },
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              const Text('Pan'),
+              Switch(
+                value: _isPanEnabled,
+                onChanged: (value) {
+                  setState(() {
+                    _isPanEnabled = value;
+                  });
+                },
+              ),
+              const Text('Scale'),
+              Switch(
+                value: _isScaleEnabled,
+                onChanged: (value) {
+                  setState(() {
+                    _isScaleEnabled = value;
+                  });
+                },
+              ),
+            ],
+          ),
+        ),
+        AspectRatio(
+          aspectRatio: 1.4,
+          child: Padding(
+            padding: const EdgeInsets.only(
+              top: 0.0,
+              right: 18.0,
+            ),
+            child: LineChart(
+                transformationConfig: FlTransformationConfig(
+                  scaleAxis: FlScaleAxis.horizontal,
+                  minScale: 1.0,
+                  maxScale: 25.0,
+                  panEnabled: _isPanEnabled,
+                  scaleEnabled: _isScaleEnabled,
+                  transformationController: _transformationController,
+                ),
+                LineChartData(
+                  lineBarsData: [
+                    LineChartBarData(
+                      spots
+                    )
+                  ]
+                )
+  }
+}*/
+class _TransformationButtons extends StatelessWidget {
+  const _TransformationButtons({
+    required this.controller,
+  });
+
+  final TransformationController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Tooltip(
+          message: 'Zoom in',
+          child: IconButton(
+            icon: const Icon(
+              Icons.add,
+              size: 16,
+            ),
+            onPressed: _transformationZoomIn,
+          ),
+        ),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Tooltip(
+              message: 'Move left',
+              child: IconButton(
+                icon: const Icon(
+                  Icons.arrow_back_ios,
+                  size: 16,
+                ),
+                onPressed: _transformationMoveLeft,
+              ),
+            ),
+            Tooltip(
+              message: 'Reset zoom',
+              child: IconButton(
+                icon: const Icon(
+                  Icons.refresh,
+                  size: 16,
+                ),
+                onPressed: _transformationReset,
+              ),
+            ),
+            Tooltip(
+              message: 'Move right',
+              child: IconButton(
+                icon: const Icon(
+                  Icons.arrow_forward_ios,
+                  size: 16,
+                ),
+                onPressed: _transformationMoveRight,
+              ),
+            ),
+          ],
+        ),
+        Tooltip(
+          message: 'Zoom out',
+          child: IconButton(
+            icon: const Icon(
+              Icons.minimize,
+              size: 16,
+            ),
+            onPressed: _transformationZoomOut,
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _transformationReset() {
+    controller.value = Matrix4.identity();
+  }
+
+  void _transformationZoomIn() {
+    controller.value *= Matrix4.diagonal3Values(
+      1.1,
+      1.1,
+      1,
+    );
+  }
+
+  void _transformationMoveLeft() {
+    controller.value *= Matrix4.translationValues(
+      20,
+      0,
+      0,
+    );
+  }
+
+  void _transformationMoveRight() {
+    controller.value *= Matrix4.translationValues(
+      -20,
+      0,
+      0,
+    );
+  }
+
+  void _transformationZoomOut() {
+    controller.value *= Matrix4.diagonal3Values(
+      0.9,
+      0.9,
+      1,
     );
   }
 }
